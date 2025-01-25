@@ -8,12 +8,44 @@ import sampleImage from './sample.jpg'
 // TODO: We can add more custom functions here to adjust the actual color
 // in a declarative way (i.e. by leveraging the `type` field here). The implementation
 // can be based on the <feColorMatrix> filter primitive and others.
-function texture(x, y) {
+function texture(x, y, rgba = '') {
   return {
     type: 't',
     x,
     y,
+    rgba,
   }
+}
+
+function parseRGBA(rgba) {
+  const normalized = rgba.replace(/\s+/g, '').toLowerCase();
+
+  const pattern = /\[(?:(\d*\.?\d+)\s*\*\s*([rgba])|([rgba])\s*\*\s*(\d*\.?\d+)|([rgba]))(?:\s*([+-])\s*(\d*\.?\d+))?\s*,\s*(?:(\d*\.?\d+)\s*\*\s*([rgba])|([rgba])\s*\*\s*(\d*\.?\d+)|([rgba]))(?:\s*([+-])\s*(\d*\.?\d+))?\s*,\s*(?:(\d*\.?\d+)\s*\*\s*([rgba])|([rgba])\s*\*\s*(\d*\.?\d+)|([rgba]))(?:\s*([+-])\s*(\d*\.?\d+))?\s*,\s*(?:(\d*\.?\d+)\s*\*\s*([rgba])|([rgba])\s*\*\s*(\d*\.?\d+)|([rgba]))(?:\s*([+-])\s*(\d*\.?\d+))?\s*\]/;
+
+  const matches = normalized.match(pattern);
+  if (!matches) return null;
+
+  const result = {
+    r: { coef: 0, constant: 0 },
+    g: { coef: 0, constant: 0 },
+    b: { coef: 0, constant: 0 },
+    a: { coef: 0, constant: 0 }
+  };
+
+  for (let i = 0; i < 4; i++) {
+    const baseIndex = 1 + i * 7;
+    let coef = matches[baseIndex] || matches[baseIndex + 3] || '1';
+    const channel = (matches[baseIndex + 1] || matches[baseIndex + 2] || matches[baseIndex + 4]).toLowerCase();
+    const sign = matches[baseIndex + 5] || '+';
+    const constant = matches[baseIndex + 6] || '0';
+
+    result[channel] = {
+      coef: parseFloat(coef),
+      constant: parseFloat(sign + constant)
+    };
+  }
+
+  return result;
 }
 
 // Making this higher will improve the quality (resolution) of the displacement
@@ -30,7 +62,11 @@ function Shader({
 }) {
   const id = useId().replace(/[#:]/g, '-')
   const canvasRef = useRef()
+  const canvasCoefRef = useRef()
+  const canvasConstantRef = useRef()
   const feImageRef = useRef()
+  const feColorCoefRef = useRef()
+  const feColorConstantRef = useRef()
   const feDisplacementMapRef = useRef()
   const containerRef = useRef()
   const debugRef = useRef()
@@ -61,11 +97,18 @@ function Shader({
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+    const canvasCoef = canvasCoefRef.current
+    if (!canvasCoef) return
+    const canvasConstant = canvasConstantRef.current
+    if (!canvasConstant) return
     if (!feImageRef.current) return
+    if (!feColorCoefRef.current) return
+    if (!feColorConstantRef.current) return
     if (!feDisplacementMapRef.current) return
 
     const context = canvas.getContext('2d')
-
+    const contextCoef = canvasCoef.getContext('2d')
+    const contextConstant = canvasConstant.getContext('2d')
     const mouse = new Proxy(mouseRef.current, {
       get: (target, prop) => {
         mouseUsed.current = true
@@ -78,11 +121,15 @@ function Shader({
     const w = width * canvasDPI
     const h = height * canvasDPI
     const data = new Uint8ClampedArray(w * h * 4)
-
+    const dataCoef = new Uint8ClampedArray(w * h * 4)
+    const dataConstant = new Uint8ClampedArray(w * h * 4)
     // Dynamic scale to make it as smooth as possible to ensure the best quality
     // but also meet the requirements of the shader.
     let maxScale = 0
     const rawValues = []
+
+    const rgbaMemo = new Map()
+
     for (let i = 0; i < data.length; i += 4) {
       const x = (i / 4) % w
       const y = ~~(i / 4 / w)
@@ -97,7 +144,41 @@ function Shader({
       const dy = pos.y * h - y
       maxScale = Math.max(maxScale, Math.abs(dx), Math.abs(dy))
       rawValues.push(dx, dy)
+
+      let rgbaObj = rgbaMemo.get(pos.rgba)
+      if (!rgbaObj) {
+        rgbaObj = parseRGBA(pos.rgba)
+        rgbaMemo.set(pos.rgba, rgbaObj)
+      }
+
+      if (!rgbaObj) {
+        dataCoef[i] = 1
+        dataCoef[i + 1] = 1
+        dataCoef[i + 2] = 1
+        dataCoef[i + 3] = 1
+        dataConstant[i] = 0
+        dataConstant[i + 1] = 0
+        dataConstant[i + 2] = 0
+        dataConstant[i + 3] = 0
+        continue
+      }
+
+      const { r: { coef: rCoef, constant: rConstant }, 
+              g: { coef: gCoef, constant: gConstant },
+              b: { coef: bCoef, constant: bConstant }, 
+              a: { coef: aCoef, constant: aConstant } } = rgbaObj
+
+      dataCoef[i] = rCoef * 255
+      dataCoef[i + 1] = gCoef * 255  
+      dataCoef[i + 2] = bCoef * 255
+      dataCoef[i + 3] = aCoef * 255
+
+      dataConstant[i] = rConstant * 255
+      dataConstant[i + 1] = gConstant * 255
+      dataConstant[i + 2] = bConstant * 255
+      dataConstant[i + 3] = aConstant * 255
     }
+    rgbaMemo.clear()
     maxScale *= 2
 
     let index = 0
@@ -110,8 +191,12 @@ function Shader({
       data[i + 3] = 255
     }
     context.putImageData(new ImageData(data, w, h), 0, 0)
+    contextCoef.putImageData(new ImageData(dataCoef, w, h), 0, 0)
+    contextConstant.putImageData(new ImageData(dataConstant, w, h), 0, 0)
 
     feImageRef.current.setAttribute('href', canvas.toDataURL())
+    feColorCoefRef.current.setAttribute('href', canvasCoef.toDataURL())
+    feColorConstantRef.current.setAttribute('href', canvasConstant.toDataURL())
     feDisplacementMapRef.current.setAttribute('scale', maxScale / canvasDPI)
     if (debugRef.current) {
       debugRef.current.textContent = `Displacement Map (scale = ${maxScale.toFixed(
@@ -152,6 +237,33 @@ function Shader({
               xChannelSelector='R'
               yChannelSelector='G'
               ref={feDisplacementMapRef}
+              result='displacement'
+            />
+            <feImage
+              width={width}
+              height={height}
+              ref={feColorCoefRef}
+              result='colorCoefficients'
+            />
+            <feImage
+              id={`${id}_colorConstants`} 
+              width={width}
+              height={height}
+              ref={feColorConstantRef}
+              result='colorConstants'
+            />
+            <feBlend 
+              in='colorCoefficients' 
+              in2='displacement' 
+              mode='multiply' 
+              result='colorMultiplied' 
+            />
+            <feComposite 
+              in='colorMultiplied'
+              in2='colorConstants'
+              operator="arithmetic"
+              k2="1"
+              k3="1"
             />
           </filter>
         </defs>
@@ -179,6 +291,18 @@ function Shader({
         width={width * canvasDPI}
         height={height * canvasDPI}
         ref={canvasRef}
+        style={{ display: debug ? 'inline-block' : 'none', width, height }}
+      />
+      <canvas
+        width={width * canvasDPI}
+        height={height * canvasDPI}
+        ref={canvasCoefRef}
+        style={{ display: debug ? 'inline-block' : 'none', width, height }}
+      />
+      <canvas
+        width={width * canvasDPI}
+        height={height * canvasDPI}
+        ref={canvasConstantRef}
         style={{ display: debug ? 'inline-block' : 'none', width, height }}
       />
     </>
@@ -209,6 +333,7 @@ function MagicCarpet({ children, debug }) {
           const y =
             (uv.x - 0.5 + offsetX) * Math.sin(angle) +
             (uv.y - 0.5 + offsetY) * Math.cos(angle)
+
           return texture(x + 0.5, y + 0.5)
         }}
       >
@@ -234,6 +359,145 @@ function MagicCarpet({ children, debug }) {
           max={1}
           step={0.01}
           onChange={(e) => setWave(e.target.value)}
+        />
+      </fieldset>
+    </>
+  )
+}
+
+function Scanline({ children, debug }) {
+  const [time, setTime] = useState(Date.now())
+
+  useEffect(() => {
+    let animationFrameId
+
+    const animate = () => {
+      setTime(Date.now())
+      animationFrameId = requestAnimationFrame(animate)
+    }
+
+    animationFrameId = requestAnimationFrame(animate)
+
+    return () => {
+      cancelAnimationFrame(animationFrameId)
+    }
+  }, [])
+
+  return (
+    <>
+      <Shader
+        width={240}
+        height={240}
+        debug={debug}
+        fragment={(uv) => {
+          const speed = 0.000015
+          const offset = (time * speed) % 1
+          const shiftedY = (uv.y + offset) % 1
+
+          const primaryScanline = Math.sin(shiftedY * 200) * 0.1 + 0.9
+          const secondaryScanline = Math.sin(shiftedY * 400) * 0.05 + 0.95
+          const scanline = primaryScanline * secondaryScanline
+
+          const flicker = 0.97 + Math.sin(time) * 0.02 + Math.sin(time * 2.5) * 0.01
+
+          const gradient = 1 - Math.abs(uv.y - 0.5) * 0.2
+
+          const finalIntensity = scanline * flicker * gradient
+
+          return texture(
+            uv.x,
+            uv.y,
+            `[${finalIntensity} * r, ${finalIntensity} * g, ${finalIntensity} * b, a]`
+          )
+        }}
+      >
+        {children}
+      </Shader>
+    </>
+  )
+}
+
+function Glitch({ children, debug }) {
+  const [time, setTime] = useState(Date.now())
+  const [intensity, setIntensity] = useState(0.5)
+  const [speed, setSpeed] = useState(0.5)
+
+  useEffect(() => {
+    let animationFrameId
+    const animate = () => {
+      setTime(Date.now())
+      animationFrameId = requestAnimationFrame(animate)
+    }
+    animationFrameId = requestAnimationFrame(animate)
+    return () => cancelAnimationFrame(animationFrameId)
+  }, [])
+
+  return (
+    <>
+      <Shader
+        width={240}
+        height={240}
+        debug={debug}
+        fragment={(uv) => {
+          const t = time * speed * 0.001
+
+          const sliceY = Math.floor(uv.y * 20) / 20
+          const sliceNoise = Math.random() * 2 - 1
+          const sliceShift = Math.sin(t + sliceY * 50) *
+            sliceNoise *
+            0.05 *
+            intensity
+
+          const rgbShift = Math.sin(t) * 0.003 * intensity
+
+          const noise = Math.random() * 0.1 - 0.05
+          const noiseIntensity = Math.sin(t * 10) * intensity
+
+          const scanline = Math.sin(uv.y * 100 + t * 10) * 0.02 * intensity
+
+          const glitchLine = Math.sin(uv.y * 100 + t) < 0.98 ?
+            1 :
+            (Math.random() * 0.5 + 0.5)
+
+          const offsetX = sliceShift +
+            (noise * noiseIntensity) +
+            scanline
+
+          return texture(
+            uv.x + offsetX,
+            uv.y,
+            `[
+              ${glitchLine} * r + ${rgbShift}, 
+              ${glitchLine} * g, 
+              ${glitchLine} * b - ${rgbShift}, 
+              a
+            ]`
+          )
+        }}
+      >
+        {children}
+      </Shader>
+      <br />
+      <fieldset>
+        <legend>Intensity</legend>
+        <input
+          type="range"
+          value={intensity}
+          min={0}
+          max={1}
+          step={0.01}
+          onChange={(e) => setIntensity(parseFloat(e.target.value))}
+        />
+      </fieldset>
+      <fieldset>
+        <legend>Speed</legend>
+        <input
+          type="range"
+          value={speed}
+          min={0}
+          max={2}
+          step={0.01}
+          onChange={(e) => setSpeed(parseFloat(e.target.value))}
         />
       </fieldset>
     </>
@@ -380,11 +644,11 @@ function Spiral({ children, debug }) {
 }
 
 export default function Page() {
-  const [selectedShader, setShader] = useState('MagicCarpet')
+  const [selectedShader, setShader] = useState('Glitch')
   const [showDebug, setShowDebug] = useState(false)
 
-  // Other ideas: raindrops, snowflakes, black hole, glitch, CRT, scanlines, etc...
-  const SelectedShader = { MagicCarpet, Pixelate, Noise, Fractal, Spiral }[
+  // Other ideas: raindrops, snowflakes, black hole, glitch, CRT, etc...
+  const SelectedShader = { Glitch, Scanline, MagicCarpet, Pixelate, Noise, Fractal, Spiral }[
     selectedShader
   ]
 
@@ -400,6 +664,8 @@ export default function Page() {
         }}
       >
         <select onChange={(e) => setShader(e.target.value)}>
+          <option value='Glitch'>Shader: Glitch</option>
+          <option value='Scanline'>Shader: Scanline</option>
           <option value='MagicCarpet'>Shader: Magic Carpet</option>
           <option value='Noise'>Shader: Noise</option>
           <option value='Pixelate'>Shader: Pixelate</option>
