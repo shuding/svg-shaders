@@ -803,7 +803,7 @@ const bloomStyle = {
   transition: 'filter 3s ease, background 3s ease',
 }
 
-function LiquidPyramid({ debug, theta, phi, isDark, isSnapped }) {
+function LiquidPyramid({ debug, theta, phi, isDark, isSnapped, scale }) {
   const context = useMemo(() => createPyramidContext(theta, phi), [theta, phi])
   const centerX = (context.hullCenter.x / WIDTH) * 100
   const centerY = (context.hullCenter.y / HEIGHT) * 100
@@ -823,6 +823,7 @@ function LiquidPyramid({ debug, theta, phi, isDark, isSnapped }) {
         width: WIDTH,
         height: HEIGHT,
         overflow: 'visible',
+        transform: `scale(${scale})`,
       }}
       draggable={false}
     >
@@ -833,7 +834,6 @@ function LiquidPyramid({ debug, theta, phi, isDark, isSnapped }) {
           clipPath: context.clipPath,
           opacity: isSnapped ? 0 : 1,
           transition: 'background 1s ease, opacity 1s ease',
-          transform: 'scale(1.04)',
           transformOrigin: `${centerX}% ${centerY}%`,
           filter: 'blur(20px) saturate(1.1) brightness(1.1)',
           background: isDark
@@ -989,6 +989,7 @@ export default function Page() {
   const baseThetaRef = useRef(0)
   const [phi, setPhi] = useState(-0.33)
   const [theta, setTheta] = useState(0)
+  const scaleRef = useRef(1)
 
   // Continuous magnetic effect loop
   useEffect(() => {
@@ -1128,6 +1129,15 @@ export default function Page() {
     springVelocityRef.current = { x: 0, y: 0 }
     isSnappedRef.current = false
     setIsSnapped(false)
+
+    // Read container size and set scale
+    const container = containerRef.current
+    if (container) {
+      const rect = container.getBoundingClientRect()
+      const width = rect.width
+      const height = rect.height
+      scaleRef.current = Math.min(width / 777, height / 971) * 1.4
+    }
   }
 
   const handleDragEnd = () => {
@@ -1277,7 +1287,7 @@ export default function Page() {
           style={{
             position: 'absolute',
             top: '72%',
-            left: '51%',
+            left: '50%',
             transform: 'translate(-50%, -50%)',
             width: '14%',
             height: '4%',
@@ -1324,6 +1334,7 @@ export default function Page() {
             draggable={false}
           >
             <LiquidPyramid
+              scale={scaleRef.current}
               debug={showDebug}
               theta={theta}
               phi={phi}
