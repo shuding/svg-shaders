@@ -2,8 +2,8 @@ import { Inter } from 'next/font/google'
 import './style.css'
 
 export const metadata = {
-  title: 'SVG Shaders',
-  description: 'Composable SVG Shaders with React',
+  title: 'You can just ship things.',
+  description: 'You can just ship things - vercel.com',
 }
 
 const inter = Inter({
@@ -15,38 +15,35 @@ const inter = Inter({
 export default function RootLayout({ children }) {
   return (
     <html lang='en'>
-      <body className={inter.className}>
-        <h1
+      <body
+        className={inter.className}
+        style={{
+          margin: 0,
+          padding: 0,
+          background: '#000',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100dvh',
+        }}
+      >
+        <img
+          src='/ship.jpg'
+          alt='Ship'
           style={{
-            fontSize: '1em',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            zIndex: -1,
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            filter: 'blur(12px)',
+            transform: 'scale(1.1)',
+            opacity: 0.17,
           }}
-        >
-          Composable SVG Shaders
-        </h1>
-        <p>
-          These “shaders” are conceptually similar to regular shader programs,
-          but can be applied to HTML elements.
-        </p>
+        />
         {children}
-        <footer>
-          <p>
-            Disclaimer: This is an <strong>experimental</strong> demo based on
-            SVG filters.
-            <br />
-            It may not work on all browsers (<strong>Chrome preferred</strong>).
-          </p>
-          <p>
-            Created by{' '}
-            <a href='https://twitter.com/shuding_' target='_blank'>
-              Shu
-            </a>
-            , source code on{' '}
-            <a href='https://github.com/shuding/svg-shaders' target='_blank'>
-              GitHub
-            </a>
-            .
-          </p>
-        </footer>
       </body>
     </html>
   )
